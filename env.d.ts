@@ -59,6 +59,8 @@ interface CloudflareEnv {
 	 */
 	S3_BUCKET?: string;
 	S3_REGION?: string;
+	/** Optional S3-compatible host (e.g. a self-hosted MinIO), used instead of s3.<region>.amazonaws.com. */
+	S3_ENDPOINT?: string;
 	S3_ACCESS_KEY_ID?: string;
 	S3_SECRET_ACCESS_KEY?: string;
 	CF_TOKEN?: string;
