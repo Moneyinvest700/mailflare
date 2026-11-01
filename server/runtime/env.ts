@@ -70,6 +70,8 @@ export function createNodeRuntime(): NodeRuntime {
 		S3_ACCESS_KEY_ID: optional("S3_ACCESS_KEY_ID") ?? optional("AWS_ACCESS_KEY_ID"),
 		S3_SECRET_ACCESS_KEY: optional("S3_SECRET_ACCESS_KEY") ?? optional("AWS_SECRET_ACCESS_KEY"),
 		CF_TOKEN: optional("CF_TOKEN"),
+		MAILJET_API_KEY: optional("MAILJET_API_KEY"),
+		MAILJET_SECRET_KEY: optional("MAILJET_SECRET_KEY"),
 		CF_API_KEY: optional("CF_API_KEY"),
 		CF_EMAIL: optional("CF_EMAIL"),
 		TURNSTILE_SECRET_KEY: optional("TURNSTILE_SECRET_KEY"),
