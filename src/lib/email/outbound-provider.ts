@@ -48,6 +48,11 @@ export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress:
 		// Tab patch: with Mailjet keys set as worker secrets, the "Resend" choice sends
 		// through Mailjet's HTTP API instead (Mailjet accepts free domains; Resend does not).
 		// Same for Brevo (BREVO_API_KEY), which takes precedence when both are set.
+		// Tab patch (Nov 2 2026): a RESEND_API_KEY worker secret wins over Brevo/Mailjet
+		// (Brevo free forces open tracking + List-Unsubscribe; Resend sends clean mail).
+		// Roll back by deleting the RESEND_API_KEY worker secret.
+		const resendEnvKey = (env as { RESEND_API_KEY?: string }).RESEND_API_KEY?.trim();
+		if (resendEnvKey) return { provider: "resend", apiKey: resendEnvKey };
 		const brevoKey = (env as { BREVO_API_KEY?: string }).BREVO_API_KEY?.trim();
 		if (brevoKey) return { provider: "brevo", apiKey: brevoKey };
 		const mailjet = getMailjetKeys(env);
