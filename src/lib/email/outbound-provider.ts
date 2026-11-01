@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { appSettings, domains } from "@/db/schema";
 import { requireAwsConfig } from "@/lib/aws/config";
 import { sendSesEmail } from "@/lib/aws/ses";
-import { getEmailAddress } from "@/lib/email/address";
+import { getEmailAddress, parseEmailAddressParts } from "@/lib/email/address";
 import type { OutboundProviderConfig, OutboundProviderMessage, ResendKeyStatus } from "@/lib/email/outbound-provider-types";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -44,7 +44,13 @@ export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress:
 	if (!domain || domain.provider === "none") {
 		throw new Error(`Sending is not set up for ${hostname ?? "this domain"}. Choose a sending provider on the Domains page.`);
 	}
-	if (domain.provider === "resend") return { provider: "resend", apiKey: await getResendApiKey(env) };
+	if (domain.provider === "resend") {
+		// Tab patch: with Mailjet keys set as worker secrets, the "Resend" choice sends
+		// through Mailjet's HTTP API instead (Mailjet accepts free domains; Resend does not).
+		const mailjet = getMailjetKeys(env);
+		if (mailjet) return { provider: "mailjet", ...mailjet };
+		return { provider: "resend", apiKey: await getResendApiKey(env) };
+	}
 	if (domain.provider === "ses") return { provider: "ses", config: await requireAwsConfig(env) };
 	return { provider: "cloudflare" };
 }
@@ -101,12 +107,85 @@ async function sendWithResend(
 	return { messageId };
 }
 
+const MAILJET_ENDPOINT = "https://api.mailjet.com/v3.1/send";
+// Headers Mailjet sets itself or takes through dedicated fields.
+const MAILJET_RESERVED_HEADERS = new Set(["message-id", "date", "from", "to", "cc", "bcc", "subject", "sender", "return-path", "mime-version", "content-type", "content-transfer-encoding"]);
+
+function getMailjetKeys(env: CloudflareEnv): { apiKey: string; secretKey: string } | null {
+	const vars = env as { MAILJET_API_KEY?: string; MAILJET_SECRET_KEY?: string };
+	const apiKey = vars.MAILJET_API_KEY?.trim();
+	const secretKey = vars.MAILJET_SECRET_KEY?.trim();
+	return apiKey && secretKey ? { apiKey, secretKey } : null;
+}
+
+function toMailjetAddress(value: string): { Email: string; Name?: string } {
+	const { address, name } = parseEmailAddressParts(value);
+	return name ? { Email: address, Name: name } : { Email: address };
+}
+
+/**
+ * Mailjet sets its own Message-ID and refuses a custom one, so the ID we mint is
+ * carried in References: a reply's References names it, which is what threading
+ * looks up.
+ */
+async function sendWithMailjet(
+	keys: { apiKey: string; secretKey: string },
+	message: OutboundProviderMessage,
+	idempotencyKey?: string,
+): Promise<{ messageId: string }> {
+	const messageId = message.headers?.["Message-ID"] ?? mintMessageId(message.from);
+	const headers: Record<string, string> = {};
+	for (const [key, value] of Object.entries(message.headers ?? {})) {
+		if (!MAILJET_RESERVED_HEADERS.has(key.toLowerCase())) headers[key] = value;
+	}
+	const referencesKey = Object.keys(headers).find((key) => key.toLowerCase() === "references");
+	if (referencesKey) {
+		if (!headers[referencesKey].includes(messageId)) headers[referencesKey] = `${headers[referencesKey]} ${messageId}`;
+	} else {
+		headers.References = messageId;
+	}
+	const inline = message.attachments?.filter((attachment) => attachment.disposition === "inline" && attachment.contentId) ?? [];
+	const regular = message.attachments?.filter((attachment) => !(attachment.disposition === "inline" && attachment.contentId)) ?? [];
+	const response = await fetch(MAILJET_ENDPOINT, {
+		method: "POST",
+		headers: {
+			Authorization: `Basic ${btoa(`${keys.apiKey}:${keys.secretKey}`)}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			Messages: [{
+				From: toMailjetAddress(message.from),
+				To: message.to.map(toMailjetAddress),
+				...(message.cc?.length ? { Cc: message.cc.map(toMailjetAddress) } : {}),
+				...(message.bcc?.length ? { Bcc: message.bcc.map(toMailjetAddress) } : {}),
+				Subject: message.subject,
+				...(message.text ? { TextPart: message.text } : {}),
+				...(message.html ? { HTMLPart: message.html } : {}),
+				Headers: headers,
+				TrackOpens: "disabled",
+				TrackClicks: "disabled",
+				...(idempotencyKey ? { CustomID: idempotencyKey.slice(0, 64) } : {}),
+				...(regular.length ? { Attachments: regular.map((attachment) => ({ ContentType: attachment.type, Filename: attachment.filename, Base64Content: toBase64(attachment.content) })) } : {}),
+				...(inline.length ? { InlinedAttachments: inline.map((attachment) => ({ ContentType: attachment.type, Filename: attachment.filename, ContentID: attachment.contentId, Base64Content: toBase64(attachment.content) })) } : {}),
+			}],
+		}),
+	});
+	const body = (await response.json().catch(() => null)) as { Messages?: { Status?: string; Errors?: { ErrorMessage?: string }[] }[]; ErrorMessage?: string } | null;
+	const result = body?.Messages?.[0];
+	if (!response.ok || result?.Status !== "success") {
+		const reason = result?.Errors?.map((error) => error.ErrorMessage).filter(Boolean).join("; ") || body?.ErrorMessage;
+		throw new Error(`Mailjet: ${reason ?? `request failed (${response.status})`}`);
+	}
+	return { messageId };
+}
+
 export async function sendThroughProvider(
 	env: CloudflareEnv,
 	config: OutboundProviderConfig,
 	message: OutboundProviderMessage,
 	idempotencyKey?: string,
 ): Promise<{ messageId: string }> {
+	if (config.provider === "mailjet") return sendWithMailjet(config, message, idempotencyKey);
 	if (config.provider === "resend") return sendWithResend(config.apiKey, message, idempotencyKey);
 	if (config.provider === "ses") return sendSesEmail(config.config, message);
 	const response = await env.EMAIL.send({
