@@ -1,0 +1,43 @@
+name: Tab DNS upsert (aitoday.dpdns.org)
+on:
+  workflow_dispatch:
+    inputs:
+      records:
+        description: 'JSON list of {type,name,content,match} to upsert (match = prefix that identifies the record to replace)'
+        required: true
+permissions:
+  contents: read
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ZONE_ID: 70b44505420d73972e2793ee93f82b9f
+      RECORDS: ${{ github.event.inputs.records }}
+    steps:
+      - name: Upsert records
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+          tok = os.environ["CF_API_TOKEN"]; zone = os.environ["ZONE_ID"]
+          def api(method, path, body=None):
+              req = urllib.request.Request("https://api.cloudflare.com/client/v4/zones/%s/dns_records%s" % (zone, path), method=method,
+                  data=json.dumps(body).encode() if body is not None else None,
+                  headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
+              try:
+                  return json.load(urllib.request.urlopen(req))
+              except urllib.error.HTTPError as e:
+                  return json.load(e)
+          for r in json.loads(os.environ["RECORDS"]):
+              existing = api("GET", "?type=%s&name=%s&per_page=100" % (r["type"], r["name"]))["result"]
+              match = r.get("match")
+              hit = [e for e in existing if (match is None) or e["content"].strip('"').startswith(match)]
+              body = {"type": r["type"], "name": r["name"], "content": r["content"], "ttl": 1}
+              if hit:
+                  res = api("PUT", "/" + hit[0]["id"], body); action = "updated"
+              else:
+                  res = api("POST", "", body); action = "created"
+              print(action, r["type"], r["name"], "ok" if res.get("success") else res.get("errors"))
+              if not res.get("success"):
+                  raise SystemExit(1)
+          EOF
