@@ -6,6 +6,7 @@ export type OutboundProviderConfig =
 	| { provider: "cloudflare" }
 	| { provider: "resend"; apiKey: string }
 	| { provider: "mailjet"; apiKey: string; secretKey: string }
+	| { provider: "brevo"; apiKey: string }
 	| { provider: "ses"; config: AwsConfig };
 
 export type OutboundProviderAttachment = {

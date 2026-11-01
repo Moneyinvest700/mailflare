@@ -47,6 +47,9 @@ export async function getOutboundProviderConfig(env: CloudflareEnv, fromAddress:
 	if (domain.provider === "resend") {
 		// Tab patch: with Mailjet keys set as worker secrets, the "Resend" choice sends
 		// through Mailjet's HTTP API instead (Mailjet accepts free domains; Resend does not).
+		// Same for Brevo (BREVO_API_KEY), which takes precedence when both are set.
+		const brevoKey = (env as { BREVO_API_KEY?: string }).BREVO_API_KEY?.trim();
+		if (brevoKey) return { provider: "brevo", apiKey: brevoKey };
 		const mailjet = getMailjetKeys(env);
 		if (mailjet) return { provider: "mailjet", ...mailjet };
 		return { provider: "resend", apiKey: await getResendApiKey(env) };
@@ -179,12 +182,59 @@ async function sendWithMailjet(
 	return { messageId };
 }
 
+const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
+// Headers Brevo sets itself or takes through dedicated fields.
+const BREVO_RESERVED_HEADERS = new Set(["date", "from", "to", "cc", "bcc", "subject", "sender", "return-path", "mime-version", "content-type", "content-transfer-encoding"]);
+
+function toBrevoAddress(value: string): { email: string; name?: string } {
+	const { address, name } = parseEmailAddressParts(value);
+	return name ? { email: address, name } : { email: address };
+}
+
+/** Brevo's transactional API. Message-ID is passed as a custom header so replies thread. */
+async function sendWithBrevo(
+	apiKey: string,
+	message: OutboundProviderMessage,
+	idempotencyKey?: string,
+): Promise<{ messageId: string }> {
+	const messageId = message.headers?.["Message-ID"] ?? mintMessageId(message.from);
+	const headers: Record<string, string> = {};
+	for (const [key, value] of Object.entries(message.headers ?? {})) {
+		if (!BREVO_RESERVED_HEADERS.has(key.toLowerCase()) && key.toLowerCase() !== "message-id") headers[key] = value;
+	}
+	headers["Message-Id"] = messageId;
+	if (idempotencyKey) headers["X-Mailflare-Idempotency-Key"] = idempotencyKey.slice(0, 128);
+	const attachments = message.attachments?.map((attachment) => ({ name: attachment.filename, content: toBase64(attachment.content) })) ?? [];
+	const response = await fetch(BREVO_ENDPOINT, {
+		method: "POST",
+		headers: { "api-key": apiKey, "Content-Type": "application/json", accept: "application/json" },
+		body: JSON.stringify({
+			sender: toBrevoAddress(message.from),
+			to: message.to.map(toBrevoAddress),
+			...(message.cc?.length ? { cc: message.cc.map(toBrevoAddress) } : {}),
+			...(message.bcc?.length ? { bcc: message.bcc.map(toBrevoAddress) } : {}),
+			subject: message.subject,
+			...(message.html ? { htmlContent: message.html } : {}),
+			...(message.text ? { textContent: message.text } : {}),
+			...(!message.html && !message.text ? { textContent: " " } : {}),
+			headers,
+			...(attachments.length ? { attachment: attachments } : {}),
+		}),
+	});
+	if (!response.ok) {
+		const body = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+		throw new Error(`Brevo: ${body?.message ?? `request failed (${response.status})`}`);
+	}
+	return { messageId };
+}
+
 export async function sendThroughProvider(
 	env: CloudflareEnv,
 	config: OutboundProviderConfig,
 	message: OutboundProviderMessage,
 	idempotencyKey?: string,
 ): Promise<{ messageId: string }> {
+	if (config.provider === "brevo") return sendWithBrevo(config.apiKey, message, idempotencyKey);
 	if (config.provider === "mailjet") return sendWithMailjet(config, message, idempotencyKey);
 	if (config.provider === "resend") return sendWithResend(config.apiKey, message, idempotencyKey);
 	if (config.provider === "ses") return sendSesEmail(config.config, message);
