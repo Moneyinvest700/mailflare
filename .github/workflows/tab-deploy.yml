@@ -1,0 +1,34 @@
+name: Tab Deploy (Cloudflare, no R2)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Patch wrangler.jsonc (no R2 on free account, set D1 id)
+        run: |
+          python3 - <<'EOF'
+          import re
+          p = "wrangler.jsonc"
+          s = open(p).read()
+          s2 = re.sub(r'\t"r2_buckets":\s*\[.*?\],\n', '', s, flags=re.S)
+          assert s2 != s, "r2 block not found"
+          s3 = s2.replace('"database_name": "mailflare",', '"database_name": "mailflare",\n\t\t\t"database_id": "6c0fa014-19ce-4ced-8296-cc86aeda0b18",', 1)
+          assert s3 != s2, "d1 not patched"
+          open(p, "w").write(s3)
+          EOF
+          grep -n "r2_buckets\|database_id" wrangler.jsonc || true
+      - run: npm run deploy
+      - name: Set CF_TOKEN worker secret
+        run: printf '%s' "$CLOUDFLARE_API_TOKEN" | npx wrangler secret put CF_TOKEN
