@@ -1,0 +1,49 @@
+name: Tab Deploy AIVESH (omdiamondexchange Cloudflare, aiveshacademy.com)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.AIVESH_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.AIVESH_CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Patch wrangler.jsonc (no R2 on free account, set D1 id)
+        run: |
+          python3 - <<'EOF'
+          import re
+          p = "wrangler.jsonc"
+          s = open(p).read()
+          s2 = re.sub(r'\t"r2_buckets":\s*\[.*?\],\n', '', s, flags=re.S)
+          assert s2 != s, "r2 block not found"
+          s3 = s2.replace('"database_name": "mailflare",', '"database_name": "mailflare",\n\t\t\t"database_id": "be2bc11b-a009-4220-b45c-e93093851fda",', 1)
+          assert s3 != s2, "d1 not patched"
+          open(p, "w").write(s3)
+          EOF
+          grep -n "r2_buckets\|database_id" wrangler.jsonc || true
+      - run: npm run deploy
+      - name: Set CF_TOKEN worker secret
+        run: printf '%s' "$CLOUDFLARE_API_TOKEN" | npx wrangler secret put CF_TOKEN
+      - name: Set S3 storage + Mailjet sending secrets
+        env:
+          S3_ENDPOINT: s3.187-127-132-18.sslip.io
+          S3_BUCKET: mailflare-aivesh
+          S3_REGION: us-east-1
+          S3_PATH_STYLE: "true"
+          S3_ACCESS_KEY_ID: ${{ secrets.AIVESH_S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.AIVESH_S3_SECRET_ACCESS_KEY }}
+          MAILJET_API_KEY: ${{ secrets.AIVESH_MAILJET_API_KEY }}
+          MAILJET_SECRET_KEY: ${{ secrets.AIVESH_MAILJET_SECRET_KEY }}
+          BREVO_API_KEY: ${{ secrets.AIVESH_BREVO_API_KEY }}
+        run: |
+          python3 -c 'import json,os; json.dump({k: os.environ[k] for k in ["S3_ENDPOINT","S3_BUCKET","S3_REGION","S3_PATH_STYLE","S3_ACCESS_KEY_ID","S3_SECRET_ACCESS_KEY","MAILJET_API_KEY","MAILJET_SECRET_KEY","BREVO_API_KEY"] if os.environ.get(k)}, open("s3-secrets.json","w"))'
+          npx wrangler secret bulk s3-secrets.json
+          rm -f s3-secrets.json

@@ -7,6 +7,8 @@ export type B2Config = {
 	endpoint: string;
 	/** Signing region, the second label of the endpoint (us-west-004). */
 	region: string;
+	/** Address the bucket path-style (<endpoint>/<bucket>) instead of <bucket>.<endpoint>. */
+	pathStyle?: boolean;
 };
 
 export type StorageStatus = {

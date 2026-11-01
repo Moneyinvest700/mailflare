@@ -78,14 +78,17 @@ export class B2Object {
 export class B2Bucket {
 	private readonly credentials: AwsConfig;
 	private readonly host: string;
+	private readonly prefix: string;
 
 	constructor(private readonly config: B2Config) {
 		this.credentials = { accessKeyId: config.keyId, secretAccessKey: config.applicationKey, region: config.region };
-		this.host = `${config.bucket}.${config.endpoint}`;
+		// Path-style (<endpoint>/<bucket>/key) when S3_PATH_STYLE is set; virtual-host style otherwise.
+		this.host = config.pathStyle ? config.endpoint : `${config.bucket}.${config.endpoint}`;
+		this.prefix = config.pathStyle ? `/${encodeURIComponent(config.bucket)}` : "";
 	}
 
 	private request(key: string | null, init: { method?: string; query?: Record<string, string>; body?: string | ArrayBuffer; headers?: Record<string, string> } = {}) {
-		return awsRequest({ config: this.credentials, service: "s3", host: this.host, path: key === null ? "/" : encodePath(key), ...init });
+		return awsRequest({ config: this.credentials, service: "s3", host: this.host, path: this.prefix + (key === null ? "/" : encodePath(key)), ...init });
 	}
 
 	private metadataHeaders(options?: PutOptions): Record<string, string> {
