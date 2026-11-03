@@ -1,5 +1,6 @@
 import { getObjectStorageConfig } from "@/lib/storage/b2-config";
 import { openB2Bucket } from "@/lib/storage/b2-bucket";
+import { openD1Bucket } from "@/lib/storage/d1-bucket";
 
 const wrapped = new WeakMap<object, CloudflareEnv>();
 const proxies = new WeakSet<object>();
@@ -14,8 +15,10 @@ export function withStorage(env: CloudflareEnv): CloudflareEnv {
 	const cached = wrapped.get(env);
 	if (cached) return cached;
 	const config = getObjectStorageConfig(env);
-	if (!config) return env;
-	const bucket = openB2Bucket(config);
+	// Tab patch (Nov 3 2026): a BLOB_DB D1 binding serves BUCKET when no R2/S3 is available (tasmiya-mail deploy).
+	const blobDb = (env as unknown as { BLOB_DB?: D1Database }).BLOB_DB;
+	if (!config && !blobDb) return env;
+	const bucket = config ? openB2Bucket(config) : openD1Bucket(blobDb as D1Database);
 	const proxy = new Proxy(env, { get: (target, property) => (property === "BUCKET" ? bucket : Reflect.get(target, property)) });
 	wrapped.set(env, proxy);
 	proxies.add(proxy);

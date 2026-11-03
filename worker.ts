@@ -97,6 +97,12 @@ export default {
 					await forwardMessage(env, message, forwardingDestination);
 				}
 			}
+			// Tab patch (Nov 3 2026, tasmiya-mail): FORWARD_COPY_TO worker var/secret sends a copy of every
+			// stored inbound message to that verified address (keeps the person's Gmail copy). Unset = no-op.
+			const copyTo = (rawEnv as unknown as { FORWARD_COPY_TO?: string }).FORWARD_COPY_TO?.trim();
+			if (copyTo && !alreadyForwarded) {
+				try { await message.forward(copyTo); } catch (forwardError) { console.error("FORWARD_COPY_TO failed", forwardError); }
+			}
 			const rawR2Key = await storeRawToR2(env, message.from, message.to, raw);
 			const payload: InboundQueueMessage = {
 				from: message.from,

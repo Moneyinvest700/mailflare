@@ -1,0 +1,23 @@
+name: Tab Deploy TASMIYA (separate tasmiya-mail worker, omdiamondexchange Cloudflare)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.AIVESH_CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.AIVESH_CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refuse to run outside the tasmiya branch
+        run: |
+          test "${GITHUB_REF_NAME}" = "tasmiya"
+          grep -q '"name": "tasmiya-mail"' wrangler.jsonc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run deploy

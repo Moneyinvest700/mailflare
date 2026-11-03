@@ -64,5 +64,6 @@ export function getCloudflareAuthHint(errors: CfApiError[], path = "") {
 }
 
 export function getEmailWorkerName(): string {
-	return "mailflare";
+	// Tab patch (Nov 3 2026): this branch deploys the separate tasmiya-mail worker.
+	return "tasmiya-mail";
 }

@@ -1,6 +1,6 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "mailflare",
+	"name": "tasmiya-mail",
 	"main": "./worker.ts",
 	"compatibility_date": "2026-05-20",
 	"keep_vars": true,
@@ -18,7 +18,7 @@
 	"services": [
 		{
 			"binding": "WORKER_SELF_REFERENCE",
-			"service": "mailflare",
+			"service": "tasmiya-mail",
 		},
 	],
 	"durable_objects": {
@@ -43,7 +43,7 @@
 	"ratelimits": [
 		{
 			"name": "LOGIN_RATE_LIMIT",
-			"namespace_id": "1001",
+			"namespace_id": "2001",
 			"simple": {
 				"limit": 20,
 				"period": 60,
@@ -51,12 +51,12 @@
 		},
 		{
 			"name": "DEVICE_LOGIN_RATE_LIMIT",
-			"namespace_id": "1003",
+			"namespace_id": "2003",
 			"simple": { "limit": 10, "period": 60 },
 		},
 		{
 			"name": "AGENT_RATE_LIMIT",
-			"namespace_id": "1002",
+			"namespace_id": "2002",
 			"simple": { "limit": 120, "period": 60 },
 		},
 	],
@@ -75,46 +75,46 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "mailflare",
+			"database_name": "tasmiya-mail",
+			"database_id": "66151b56-3f98-4a3b-9dd5-17e6f628e0cb",
 			"migrations_dir": "drizzle/migrations",
 		},
-	],
-	"r2_buckets": [
 		{
-			"binding": "BUCKET",
-			"bucket_name": "mailflare-raw",
+			"binding": "BLOB_DB",
+			"database_name": "tasmiya-mail-blobs",
+			"database_id": "c06ff578-8a6a-4faa-8286-a8c27643d81b",
 		},
 	],
 	"queues": {
 		"producers": [
 			{
 				"binding": "INBOUND_QUEUE",
-				"queue": "mailflare-inbound",
+				"queue": "tasmiya-inbound",
 			},
 			{
 				"binding": "OUTBOUND_QUEUE",
-				"queue": "mailflare-outbound",
+				"queue": "tasmiya-outbound",
 			},
 			{
 				"binding": "AGENT_QUEUE",
-				"queue": "mailflare-agent",
+				"queue": "tasmiya-agent",
 			},
 		],
 		"consumers": [
 			{
-				"queue": "mailflare-inbound",
+				"queue": "tasmiya-inbound",
 				"max_batch_size": 5,
 				"max_retries": 3,
 			},
 			{
-				"queue": "mailflare-outbound",
+				"queue": "tasmiya-outbound",
 				"max_batch_size": 5,
 				// Sends wait out the undo window already; do not also wait for a batch to fill.
 				"max_batch_timeout": 1,
 				"max_retries": 3,
 			},
 			{
-				"queue": "mailflare-agent",
+				"queue": "tasmiya-agent",
 				"max_batch_size": 1,
 				"max_retries": 3,
 			},
